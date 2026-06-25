@@ -20,21 +20,13 @@ class SolarForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             api_key = user_input["api_key"]
             
-            # Define the secure HTTP Header your website backend will intercept
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "HomeAssistantIntegration/1.0"
-            }
-            
             async with aiohttp.ClientSession() as session:
                 try:
-                    url = "https://solar-forecast.com/api-view.html"
+                    # Target the exact URL format specified in your documentation
+                    url = f"https://www.solar-forecast.com/forecast?api_key={api_key}"
                     
-                    # Pass the token inside headers instead of appending it to the URL string
-                    async with session.get(url, headers=headers, timeout=10) as response:
+                    async with session.get(url, timeout=10) as response:
                         if response.status == 200:
-                            # Key verified successfully! Create the integration instance.
                             return self.async_create_entry(
                                 title="Solar-Forecast.com", 
                                 data={"api_key": api_key}
@@ -42,7 +34,7 @@ class SolarForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         elif response.status in (401, 403):
                             errors["base"] = "invalid_auth"
                         else:
-                            _LOGGER.error("Server returned unexpected status: %s", response.status)
+                            _LOGGER.error("Server returned status code: %s", response.status)
                             errors["base"] = "cannot_connect"
                             
                 except aiohttp.ClientError:
@@ -51,7 +43,6 @@ class SolarForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.error("Unexpected authentication exception: %s", err)
                     errors["base"] = "unknown"
 
-        # Present the clean setup form UI to the user
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
