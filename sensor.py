@@ -4,9 +4,6 @@ import logging
 import aiohttp
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass, SensorEntity
-from homeassistant.const import UnitOfPower
-
-from .const import DOMAIN
 
 # Adjusted to 20 minutes to safely stay within your 15-call limit
 SCAN_INTERVAL = timedelta(minutes=20)
@@ -28,8 +25,8 @@ class SolarForecastPowerSensor(SensorEntity):
         self._attr_name = "Solar Forecast Current Power"
         self._attr_unique_id = f"solar_forecast_power_{api_key[:8]}"
         
-        # Switched to Power (kW) to cleanly handle the localized kWatt timestamp array
-        self._attr_native_unit_of_measurement = UnitOfPower.KILOWATT
+        # Hardcoding the native unit string avoids version-mismatch enum bugs
+        self._attr_native_unit_of_measurement = "kW"
         self._attr_device_class = SensorDeviceClass.POWER
         self._attr_state_class = SensorStateClass.MEASUREMENT
         
@@ -55,7 +52,7 @@ class SolarForecastPowerSensor(SensorEntity):
                     if response.status == 200:
                         json_payload = await response.json()
                         
-                        # Grab the "kWatt" nested dictionary block
+                        # Grab the "kWatt" nested dictionary block from your API layout
                         kw_data = json_payload.get("kWatt", {})
                         
                         if kw_data:
