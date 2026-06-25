@@ -4,6 +4,7 @@ import logging
 import aiohttp
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass, SensorEntity
+from .const import DOMAIN
 
 # Adjusted to 20 minutes to safely stay within your 15-call limit
 SCAN_INTERVAL = timedelta(minutes=20)
