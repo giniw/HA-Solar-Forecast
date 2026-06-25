@@ -20,14 +20,19 @@ class SolarForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             api_key = user_input["api_key"]
             
-            # Use a clean, single asynchronous HTTP session to test the credentials
+            # Define the secure HTTP Header your website backend will intercept
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "HomeAssistantIntegration/1.0"
+            }
+            
             async with aiohttp.ClientSession() as session:
                 try:
-                    # Pointing to your actual API documentation view / data endpoint
-                    # We append the key as a query parameter or header depending on your site design
-                    url = f"https://solar-forecast.com/api-view.html?key={api_key}"
+                    url = "https://solar-forecast.com/api-view.html"
                     
-                    async with session.get(url, timeout=10) as response:
+                    # Pass the token inside headers instead of appending it to the URL string
+                    async with session.get(url, headers=headers, timeout=10) as response:
                         if response.status == 200:
                             # Key verified successfully! Create the integration instance.
                             return self.async_create_entry(
