@@ -1,0 +1,20 @@
+record_generation:
+  name: Record Solar Generation
+  description: Uploads live solar panel energy generation data to your account.
+  fields:
+    energy:
+      name: Energy
+      description: Energy generation value in kWh.
+      required: true
+      selector:
+        number:
+          min: 0.0
+          max: 1000.0
+          step: 0.01
+          mode: box
+    datetime:
+      name: Date Time (Optional)
+      description: Strictly in "%Y-%m-%d %H:%M:%S" format. Leave blank unless you are completely sure.
+      required: false
+      selector:
+        text:
