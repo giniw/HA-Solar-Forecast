@@ -1,0 +1,130 @@
+views:
+  - type: sections
+    title: Solar Overview
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: 1. Today's Profile
+          - type: custom:apexcharts-card
+            graph_span: 24h
+            span:
+              start: day
+            apex_config:
+              xaxis:
+                title:
+                  text: Time
+              yaxis:
+                decimalsInFloat: 1
+                title:
+                  text: Power (kW)
+            series:
+              - entity: sensor.solar_forecast_current_power
+                name: Today's Forecast
+                type: area
+                color: '#a36363'
+                opacity: 0.4
+                data_generator: |
+                  const timeline = entity.attributes.forecast_timeline;
+                  if (!timeline) return [];
+                  const todayStr = new Date().toISOString().split('T')[0];
+                  return Object.keys(timeline).filter(k => k.startsWith(todayStr)).map(k => [new Date(k).getTime(), timeline[k]]);
+              - entity: sensor.solar_forecast_current_power
+                name: Clear Sky Limit
+                type: line
+                color: '#00b4d8'
+                stroke_width: 2
+                data_generator: |
+                  const timeline = entity.attributes.forecast_timeline;
+                  if (!timeline) return [];
+                  const todayStr = new Date().toISOString().split('T')[0];
+                  return Object.keys(timeline).filter(k => k.startsWith(todayStr)).map(k => {
+                    const hr = new Date(k).getHours() + (new Date(k).getMinutes()/60);
+                    const curve = (hr > 5 && hr < 18.5) ? Math.sin((hr - 5) / 13.5 * Math.PI) * 3.78 : 0;
+                    return [new Date(k).getTime(), curve];
+                  });
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: 2. Tomorrow's Profile
+          - type: custom:apexcharts-card
+            graph_span: 24h
+            span:
+              start: day
+              offset: +1d
+            apex_config:
+              xaxis:
+                title:
+                  text: Time
+              yaxis:
+                decimalsInFloat: 1
+                title:
+                  text: Power (kW)
+            series:
+              - entity: sensor.solar_forecast_current_power
+                name: Tomorrow's Forecast
+                type: area
+                color: '#cca4a4'
+                opacity: 0.4
+                data_generator: |
+                  const timeline = entity.attributes.forecast_timeline;
+                  if (!timeline) return [];
+                  const tom = new Date(); tom.setDate(tom.getDate() + 1);
+                  const tomStr = tom.toISOString().split('T')[0];
+                  return Object.keys(timeline).filter(k => k.startsWith(tomStr)).map(k => [new Date(k).getTime(), timeline[k]]);
+              - entity: sensor.solar_forecast_current_power
+                name: Clear Sky Limit
+                type: line
+                color: '#00b4d8'
+                stroke_width: 2
+                data_generator: |
+                  const timeline = entity.attributes.forecast_timeline;
+                  if (!timeline) return [];
+                  const tom = new Date(); tom.setDate(tom.getDate() + 1);
+                  const tomStr = tom.toISOString().split('T')[0];
+                  return Object.keys(timeline).filter(k => k.startsWith(tomStr)).map(k => {
+                    const hr = new Date(k).getHours() + (new Date(k).getMinutes()/60);
+                    const curve = (hr > 5 && hr < 18.5) ? Math.sin((hr - 5) / 13.5 * Math.PI) * 3.78 : 0;
+                    return [new Date(k).getTime(), curve];
+                  });
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: 3. Today vs Tomorrow Comparison
+          - type: custom:apexcharts-card
+            graph_span: 24h
+            span:
+              start: day
+            apex_config:
+              xaxis:
+                title:
+                  text: Time
+              yaxis:
+                decimalsInFloat: 1
+                title:
+                  text: Power (kW)
+            series:
+              - entity: sensor.solar_forecast_current_power
+                name: Today's Yield
+                type: line
+                color: '#a36363'
+                stroke_width: 3
+                data_generator: |
+                  const timeline = entity.attributes.forecast_timeline;
+                  if (!timeline) return [];
+                  const todayStr = new Date().toISOString().split('T')[0];
+                  return Object.keys(timeline).filter(k => k.startsWith(todayStr)).map(k => [new Date(k).getTime(), timeline[k]]);
+              - entity: sensor.solar_forecast_current_power
+                name: Tomorrow's Yield
+                type: line
+                color: '#00b4d8'
+                stroke_width: 2
+                data_generator: |
+                  const timeline = entity.attributes.forecast_timeline;
+                  if (!timeline) return [];
+                  const tom = new Date(); tom.setDate(tom.getDate() + 1);
+                  const tomStr = tom.toISOString().split('T')[0];
+                  const offset = 24 * 60 * 60 * 1000;
+                  return Object.keys(timeline).filter(k => k.startsWith(tomStr)).map(k => [new Date(k).getTime() - offset, timeline[k]]);
