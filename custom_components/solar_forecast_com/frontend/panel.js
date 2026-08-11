@@ -1,1 +1,786 @@
+/**********************************************************************
+ * solar-forecast-panel.js
+ *
+ * Home Assistant custom panel for solar-forecast.com
+ *
+ * Uses:
+ *   GET /api/solar_forecast/entries
+ *   GET /api/solar_forecast/{entry_id}
+ *
+ * Layout mirrors the website /index dashboard:
+ *   • Plant selector (multi config entry)
+ *   • Summary cards
+ *   • Main forecast charts (Forecast / Clear Sky / Generation) by day
+ *   • Per-array DC output charts by day
+ *   • Array-wise pie + next-3-days bar
+ *   • Refresh every 5 minutes
+ *********************************************************************/
 
+const SERIES_COLORS = {
+    Forecast: "#b06b77",
+    "Clear Sky": "#9fc1d6",
+    Generation: "#30ab2b",
+    Personalised: "#7b68ee",
+};
+
+const PANEL_LINE_COLORS = [
+    "#b06b77",
+    "#30ab2b",
+    "#9fc1d6",
+    "#f0a030",
+    "#7b68ee",
+    "#20b2aa",
+    "#ff7f50",
+    "#e91e8c",
+];
+
+const DAY_LABELS = ["Today", "Tomorrow", "Day after"];
+
+let chartPromise = null;
+
+function loadChartJS() {
+    if (window.Chart) {
+        return Promise.resolve();
+    }
+    if (chartPromise) {
+        return chartPromise;
+    }
+
+    chartPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "/solar_forecast/chart.umd.min.js";
+        script.onload = () => resolve();
+        script.onerror = (err) => {
+            console.error("Unable to load Chart.js");
+            reject(err);
+        };
+        document.head.appendChild(script);
+    });
+
+    return chartPromise;
+}
+
+class SolarForecastPanel extends HTMLElement {
+    constructor() {
+        super();
+        this._hass = null;
+        this._charts = [];
+        this._lastData = "";
+        this._connected = false;
+        this._timer = null;
+        this._entries = [];
+        this._selectedEntry = null;
+        this._mainDay = 0;
+        this._arrayDay = 0;
+        this._dayBuckets = null;
+        this._arrayMeta = [];
+        this._api = null;
+    }
+
+    connectedCallback() {
+        this._connected = true;
+        if (!this.shadowRoot) {
+            this.attachShadow({ mode: "open" });
+        }
+
+        this.shadowRoot.innerHTML = `
+<style>
+:host {
+  display: block;
+  padding: 16px;
+  background: var(--primary-background-color);
+  color: var(--primary-text-color);
+  font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif);
+}
+.plant-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.plant-bar label {
+  font-size: 14px;
+  color: var(--secondary-text-color);
+}
+.plant-bar select {
+  min-width: 220px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--divider-color);
+  background: var(--card-background-color);
+  color: var(--primary-text-color);
+}
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.metric {
+  background: var(--card-background-color);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: var(--ha-card-box-shadow);
+}
+.metric-title {
+  font-size: 13px;
+  color: var(--secondary-text-color);
+}
+.metric-value {
+  font-size: 30px;
+  font-weight: 700;
+  margin-top: 8px;
+}
+.metric-unit {
+  font-size: 12px;
+  color: var(--secondary-text-color);
+}
+.charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+@media (max-width: 900px) {
+  .charts-row { grid-template-columns: 1fr; }
+}
+.panel-card {
+  background: var(--card-background-color);
+  border-radius: 12px;
+  padding: 14px 16px 18px;
+  box-shadow: var(--ha-card-box-shadow);
+}
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+}
+.section-sub {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0 0 10px 0;
+  min-height: 1.2em;
+}
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.tab {
+  border: 1px solid var(--divider-color);
+  background: transparent;
+  color: var(--primary-text-color);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.tab.active {
+  background: var(--primary-color);
+  color: var(--text-primary-color, #fff);
+  border-color: var(--primary-color);
+}
+.chart-container {
+  height: 320px;
+  position: relative;
+}
+.chart-container.short {
+  height: 280px;
+}
+.lower-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 900px) {
+  .lower-row { grid-template-columns: 1fr; }
+}
+.status {
+  padding: 24px;
+  color: var(--secondary-text-color);
+}
+</style>
+
+<div class="plant-bar">
+  <label for="plant-select">Plant</label>
+  <select id="plant-select"></select>
+</div>
+
+<div id="summary" class="summary"></div>
+
+<div class="charts-row">
+  <div class="panel-card">
+    <div class="tabs" id="main-tabs"></div>
+    <p class="section-title" id="main-heading">Expected Generation</p>
+    <p class="section-sub" id="main-sub"></p>
+    <div class="chart-container"><canvas id="main-chart"></canvas></div>
+  </div>
+  <div class="panel-card">
+    <div class="tabs" id="array-tabs"></div>
+    <p class="section-title">Array DC output</p>
+    <p class="section-sub">&nbsp;</p>
+    <div class="chart-container"><canvas id="array-chart"></canvas></div>
+  </div>
+</div>
+
+<div class="lower-row">
+  <div class="panel-card">
+    <p class="section-title">Today's Array-wise Total Production</p>
+    <p class="section-sub">&nbsp;</p>
+    <div class="chart-container short"><canvas id="pie-chart"></canvas></div>
+  </div>
+  <div class="panel-card">
+    <p class="section-title">Total Production Next 3 Days</p>
+    <p class="section-sub">&nbsp;</p>
+    <div class="chart-container short"><canvas id="bar-chart"></canvas></div>
+  </div>
+</div>
+
+<div id="status" class="status" style="display:none"></div>
+`;
+
+        this._buildTabs();
+        if (this._hass) {
+            this._initialize();
+        }
+    }
+
+    disconnectedCallback() {
+        this._connected = false;
+        this._destroyCharts();
+        if (this._timer) {
+            clearTimeout(this._timer);
+            this._timer = null;
+        }
+    }
+
+    set hass(hass) {
+        this._hass = hass;
+        if (!this._connected) {
+            return;
+        }
+        if (!this._timer) {
+            this._initialize();
+        }
+    }
+
+    async _initialize() {
+        await this._loadEntries();
+        this._scheduleUpdate();
+    }
+
+    async _loadEntries() {
+        const entries = await this._hass.callApi("GET", "solar_forecast/entries");
+        this._entries = entries || [];
+
+        const select = this.shadowRoot.querySelector("#plant-select");
+        select.innerHTML = "";
+
+        if (!this._entries.length) {
+            this._selectedEntry = null;
+            this._setStatus("No Solar Forecast plants configured.");
+            return;
+        }
+
+        this._entries.forEach((entry) => {
+            const option = document.createElement("option");
+            option.value = entry.entry_id;
+            option.textContent = entry.title;
+            select.appendChild(option);
+        });
+
+        if (
+            !this._selectedEntry ||
+            !this._entries.some((e) => e.entry_id === this._selectedEntry)
+        ) {
+            this._selectedEntry = this._entries[0].entry_id;
+        }
+
+        select.value = this._selectedEntry;
+        select.onchange = () => {
+            this._selectedEntry = select.value;
+            this._lastData = "";
+            this._mainDay = 0;
+            this._arrayDay = 0;
+            this._buildTabs();
+            this._update();
+        };
+    }
+
+    _buildTabs() {
+        const mainTabs = this.shadowRoot.querySelector("#main-tabs");
+        const arrayTabs = this.shadowRoot.querySelector("#array-tabs");
+        mainTabs.innerHTML = "";
+        arrayTabs.innerHTML = "";
+
+        DAY_LABELS.forEach((label, idx) => {
+            const mainBtn = document.createElement("button");
+            mainBtn.className = "tab" + (idx === this._mainDay ? " active" : "");
+            mainBtn.textContent = label;
+            mainBtn.addEventListener("click", () => {
+                this._mainDay = idx;
+                this._buildTabs();
+                this._redrawMainAndArrays();
+            });
+            mainTabs.appendChild(mainBtn);
+
+            const arrayBtn = document.createElement("button");
+            arrayBtn.className = "tab" + (idx === this._arrayDay ? " active" : "");
+            arrayBtn.textContent = label;
+            arrayBtn.addEventListener("click", () => {
+                this._arrayDay = idx;
+                this._buildTabs();
+                this._redrawMainAndArrays();
+            });
+            arrayTabs.appendChild(arrayBtn);
+        });
+    }
+
+    async _scheduleUpdate() {
+        await this._update();
+        this._timer = setTimeout(() => this._scheduleUpdate(), 300000);
+    }
+
+    _destroyCharts() {
+        this._charts.forEach((chart) => {
+            try {
+                chart.destroy();
+            } catch (e) {
+                /* ignore */
+            }
+        });
+        this._charts = [];
+    }
+
+    _setStatus(msg) {
+        const el = this.shadowRoot.querySelector("#status");
+        if (!msg) {
+            el.style.display = "none";
+            el.textContent = "";
+            return;
+        }
+        el.style.display = "block";
+        el.textContent = msg;
+    }
+
+    async _update() {
+        if (!this._hass) {
+            return;
+        }
+        if (!this._selectedEntry) {
+            this._setStatus("No Solar Forecast plants configured.");
+            return;
+        }
+
+        try {
+            await loadChartJS();
+            const api = await this._hass.callApi(
+                "GET",
+                `solar_forecast/${this._selectedEntry}`
+            );
+            if (!api || api.error) {
+                this._setStatus(api?.error || "Unable to retrieve forecast.");
+                return;
+            }
+
+            this._setStatus("");
+            this._renderSummary(api);
+
+            const fingerprint = JSON.stringify({
+                entry: this._selectedEntry,
+                kWatt: api.kWatt,
+                clearsky_kWatt: api.clearsky_kWatt,
+                personalised_kWatt: api.personalised_kWatt,
+                generation: api.generation,
+                arrays: api.arrays,
+                ArrayDayTotals: api.ArrayDayTotals,
+                Next3Days: api.Next3Days,
+            });
+
+            if (fingerprint === this._lastData && this._charts.length > 0) {
+                return;
+            }
+
+            this._lastData = fingerprint;
+            this._api = api;
+            this._arrayMeta = api.arrays || [];
+            this._dayBuckets = this._buildDayBuckets(api);
+
+            if (!this._dayBuckets.days.length) {
+                this._setStatus("No forecast data available");
+                this._destroyCharts();
+                return;
+            }
+
+            this._drawAll();
+        } catch (err) {
+            console.error(err);
+            this._setStatus("Unable to retrieve forecast.");
+        }
+    }
+
+    _renderSummary(api) {
+        const summary = this.shadowRoot.querySelector("#summary");
+        summary.innerHTML = "";
+
+        const cards = [
+            { title: "Today's Forecast", value: api.TodaysForecast, unit: "kWh" },
+            { title: "Tomorrow's Forecast", value: api.TomorrowsForecast, unit: "kWh" },
+            { title: "Day After Forecast", value: api.DayAftersForecast, unit: "kWh" },
+            { title: "Generation Now", value: api.GenerationNow, unit: "kW" },
+            { title: "Total Generation", value: api.TotalGeneration, unit: "kWh" },
+        ];
+
+        (api.ArrayDayTotals || []).forEach((item) => {
+            cards.push({
+                title: `${item.label || ("Array " + item.array)} Today`,
+                value: item.today,
+                unit: "kWh",
+            });
+        });
+
+        cards.forEach((card) => {
+            const div = document.createElement("div");
+            div.className = "metric";
+            div.innerHTML = `
+                <div class="metric-title">${card.title}</div>
+                <div class="metric-value">${Number(card.value ?? 0).toFixed(2)}</div>
+                <div class="metric-unit">${card.unit}</div>
+            `;
+            summary.appendChild(div);
+        });
+    }
+
+    _buildDayBuckets(api) {
+        const seriesMap = {};
+        if (api.kWatt) seriesMap.Forecast = api.kWatt;
+        if (api.clearsky_kWatt) seriesMap["Clear Sky"] = api.clearsky_kWatt;
+        if (api.personalised_kWatt && Object.keys(api.personalised_kWatt).length) {
+            seriesMap.Personalised = api.personalised_kWatt;
+        }
+        if (api.generation) seriesMap.Generation = api.generation;
+
+        const arraySeries = {};
+        (api.arrays || []).forEach((item) => {
+            const key = item.key || `array_${item.array}_kWatt`;
+            if (api[key]) {
+                arraySeries[item.label || `Array ${item.array}`] = {
+                    series: api[key],
+                    color:
+                        item.color ||
+                        PANEL_LINE_COLORS[(item.array - 1) % PANEL_LINE_COLORS.length],
+                    array: item.array,
+                };
+            }
+        });
+
+        if (!Object.keys(arraySeries).length) {
+            Object.keys(api).forEach((key) => {
+                const match = /^array_(\d+)_kWatt$/.exec(key);
+                if (!match || !api[key] || typeof api[key] !== "object") {
+                    return;
+                }
+                const num = Number(match[1]);
+                arraySeries[`Array ${num}`] = {
+                    series: api[key],
+                    color: PANEL_LINE_COLORS[(num - 1) % PANEL_LINE_COLORS.length],
+                    array: num,
+                };
+            });
+        }
+
+        const daySet = new Set();
+
+        const toPointsByDay = (series) => {
+            const byDay = {};
+            Object.entries(series || {}).forEach(([ts, value]) => {
+                const d = new Date(ts);
+                if (Number.isNaN(d.getTime())) {
+                    return;
+                }
+                const day =
+                    d.getFullYear() +
+                    "-" +
+                    String(d.getMonth() + 1).padStart(2, "0") +
+                    "-" +
+                    String(d.getDate()).padStart(2, "0");
+                daySet.add(day);
+                if (!byDay[day]) {
+                    byDay[day] = [];
+                }
+                const y = Number(value);
+                byDay[day].push({
+                    x: d.getTime(),
+                    y: Number.isFinite(y) ? y : null,
+                });
+            });
+            Object.values(byDay).forEach((pts) => pts.sort((a, b) => a.x - b.x));
+            return byDay;
+        };
+
+        const mainByName = {};
+        Object.entries(seriesMap).forEach(([name, series]) => {
+            mainByName[name] = toPointsByDay(series);
+        });
+
+        const arrayByName = {};
+        Object.entries(arraySeries).forEach(([name, info]) => {
+            arrayByName[name] = {
+                color: info.color,
+                byDay: toPointsByDay(info.series),
+            };
+        });
+
+        const days = Array.from(daySet).sort();
+        return { days, mainByName, arrayByName };
+    }
+
+    _dayKey(offset) {
+        const days = this._dayBuckets?.days || [];
+        return days[offset] || null;
+    }
+
+    _formatTime(ms) {
+        return new Date(ms).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+        });
+    }
+
+    _lineOptions(yTitle) {
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            parsing: false,
+            interaction: { mode: "nearest", axis: "x", intersect: false },
+            plugins: {
+                legend: { position: "top" },
+                tooltip: {
+                    enabled: true,
+                    callbacks: {
+                        title: (items) =>
+                            items.length ? this._formatTime(items[0].parsed.x) : "",
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    type: "linear",
+                    title: { display: true, text: "Time" },
+                    ticks: { callback: (value) => this._formatTime(value) },
+                },
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: yTitle },
+                },
+            },
+        };
+    }
+
+    _makeChart(canvas, config) {
+        const chart = new Chart(canvas.getContext("2d"), config);
+        this._charts.push(chart);
+        return chart;
+    }
+
+    _drawAll() {
+        this._destroyCharts();
+        this._redrawMainAndArrays();
+    }
+
+    _redrawMainAndArrays() {
+        if (!this._dayBuckets) {
+            return;
+        }
+        this._destroyCharts();
+        this._drawMain();
+        this._drawArrays();
+        this._drawPie();
+        this._drawBar();
+    }
+
+    _drawMain() {
+        const api = this._api || {};
+        const dayKey = this._dayKey(this._mainDay);
+        const canvas = this.shadowRoot.querySelector("#main-chart");
+        const heading = this.shadowRoot.querySelector("#main-heading");
+        const sub = this.shadowRoot.querySelector("#main-sub");
+
+        const totals = [
+            api.TodaysForecast,
+            api.TomorrowsForecast,
+            api.DayAftersForecast,
+        ];
+        const gen = api.TotalGeneration;
+
+        if (this._mainDay === 0) {
+            heading.textContent = "Expected Generation | Generated Today";
+            sub.textContent = `${Number(totals[0] ?? 0).toFixed(2)} kWh | ${Number(gen ?? 0).toFixed(2)} kWh`;
+        } else {
+            heading.textContent = "Expected Generation";
+            sub.textContent = `${Number(totals[this._mainDay] ?? 0).toFixed(2)} kWh`;
+        }
+
+        if (!dayKey || !this._dayBuckets) {
+            return;
+        }
+
+        const order = ["Forecast", "Clear Sky", "Generation", "Personalised"];
+        const datasets = [];
+
+        order.forEach((name) => {
+            const byDay = this._dayBuckets.mainByName[name];
+            if (!byDay) {
+                return;
+            }
+            if (name === "Generation" && this._mainDay !== 0) {
+                return;
+            }
+            const fill = name === "Forecast" || name === "Generation";
+            datasets.push({
+                label: name,
+                data: byDay[dayKey] || [],
+                borderColor: SERIES_COLORS[name],
+                backgroundColor: fill ? SERIES_COLORS[name] + "33" : "transparent",
+                fill,
+                tension: 0.25,
+                borderWidth: 2,
+                pointRadius: 0,
+                spanGaps: true,
+            });
+        });
+
+        this._makeChart(canvas, {
+            type: "line",
+            data: { datasets },
+            options: this._lineOptions("Power (kW)"),
+        });
+    }
+
+    _drawArrays() {
+        const dayKey = this._dayKey(this._arrayDay);
+        const canvas = this.shadowRoot.querySelector("#array-chart");
+        if (!dayKey || !this._dayBuckets) {
+            return;
+        }
+
+        const datasets = Object.entries(this._dayBuckets.arrayByName).map(
+            ([name, info]) => ({
+                label: name,
+                data: info.byDay[dayKey] || [],
+                borderColor: info.color,
+                backgroundColor: "transparent",
+                fill: false,
+                tension: 0.25,
+                borderWidth: 2,
+                pointRadius: 0,
+                spanGaps: true,
+            })
+        );
+
+        this._makeChart(canvas, {
+            type: "line",
+            data: { datasets },
+            options: this._lineOptions("Power (kW)"),
+        });
+    }
+
+    _drawPie() {
+        const canvas = this.shadowRoot.querySelector("#pie-chart");
+        const totals = this._api?.ArrayDayTotals || [];
+        const labels = totals.map((t) => t.label || `Array ${t.array}`);
+        const values = totals.map((t) => Number(t.today ?? 0));
+        const colors = totals.map(
+            (t, i) => t.color || PANEL_LINE_COLORS[i % PANEL_LINE_COLORS.length]
+        );
+        const sum = values.reduce((a, b) => a + b, 0);
+
+        this._makeChart(canvas, {
+            type: "doughnut",
+            data: {
+                labels: sum > 0 ? labels : ["No production data"],
+                datasets: [
+                    {
+                        data: sum > 0 ? values : [1],
+                        backgroundColor: sum > 0 ? colors : ["#cccccc"],
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: {
+                    legend: { position: "bottom" },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => {
+                                if (sum <= 0) {
+                                    return "No production data";
+                                }
+                                const v = Number(ctx.raw || 0);
+                                const pct = ((v / sum) * 100).toFixed(1);
+                                return `${ctx.label}: ${v.toFixed(2)} kWh (${pct}%)`;
+                            },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    _drawBar() {
+        const canvas = this.shadowRoot.querySelector("#bar-chart");
+        const values = (
+            this._api?.Next3Days || [
+                this._api?.TodaysForecast,
+                this._api?.TomorrowsForecast,
+                this._api?.DayAftersForecast,
+            ]
+        ).map((v) => Number(v ?? 0));
+
+        this._makeChart(canvas, {
+            type: "bar",
+            data: {
+                labels: DAY_LABELS,
+                datasets: [
+                    {
+                        label: "Energy (kWh)",
+                        data: values,
+                        backgroundColor: "#4f46e5",
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => `${Number(ctx.raw || 0).toFixed(2)} kWh`,
+                        },
+                    },
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: "Energy (kWh)" },
+                    },
+                },
+            },
+        });
+    }
+
+    getCardSize() {
+        return 12;
+    }
+}
+
+if (!customElements.get("solar-forecast-panel")) {
+    customElements.define("solar-forecast-panel", SolarForecastPanel);
+}
