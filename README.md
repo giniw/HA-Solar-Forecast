@@ -12,7 +12,7 @@ Home Assistant custom integration for [Solar-Forecast.com](https://solar-forecas
 | **Version** | 1.0.0 |
 | **IoT class** | Cloud polling |
 | **Config** | UI config flow (no YAML required) |
-| **API docs** | [solar-forecast.com/api-view.html](https://solar-forecast.com/api) |
+| **API docs** | [solar-forecast.com/api](https://solar-forecast.com/api) |
 
 ---
 
