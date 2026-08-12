@@ -96,12 +96,80 @@ class SolarForecastPanel extends HTMLElement {
   max-width: 100%;
   min-width: 0;
   overflow-x: hidden;
-  padding: 16px;
+  padding: 0;
   background: var(--primary-background-color);
   color: var(--primary-text-color);
-  font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif);
+  font-family: var(--paper-font-body1_-_font-family, Roboto, Noto, sans-serif);
 }
 *, *::before, *::after { box-sizing: border-box; }
+
+/* Match HA / HACS: panel owns the top app bar + hamburger on narrow */
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--header-height, 56px);
+  min-height: var(--header-height, 56px);
+  padding: 0 12px 0 4px;
+  padding-top: env(safe-area-inset-top, 0px);
+  background-color: var(--app-header-background-color, var(--primary-color));
+  color: var(--app-header-text-color, var(--text-primary-color, #fff));
+  border-bottom: var(--app-header-border-bottom, none);
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+.menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.menu-btn:hover,
+.menu-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+.menu-btn svg {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+}
+/* Show hamburger when HA says narrow, sidebar always hidden, or panel is narrow */
+:host(.ha-narrow) .menu-btn,
+:host(.show-menu) .menu-btn,
+:host(.narrow) .menu-btn {
+  display: inline-flex;
+}
+@media (max-width: 870px) {
+  .menu-btn { display: inline-flex; }
+}
+.top-bar-title {
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1.2;
+  margin: 0;
+  padding-inline-start: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.content {
+  padding: 16px;
+  max-width: 100%;
+  min-width: 0;
+}
+
 .plant-bar {
   display: flex;
   align-items: center;
@@ -236,6 +304,16 @@ class SolarForecastPanel extends HTMLElement {
 }
 </style>
 
+<header class="top-bar" part="top-bar">
+  <button type="button" class="menu-btn" id="menu-btn" title="Sidebar" aria-label="Open sidebar">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M3,6H21V8H3V6M3,11H21V13H3V11M3,16H21V18H3V16Z"></path>
+    </svg>
+  </button>
+  <h1 class="top-bar-title">Solar Forecast</h1>
+</header>
+
+<div class="content">
 <div class="plant-bar">
   <label for="plant-select">Plant</label>
   <select id="plant-select"></select>
@@ -272,9 +350,11 @@ class SolarForecastPanel extends HTMLElement {
 </div>
 
 <div id="status" class="status" style="display:none"></div>
+</div>
 `;
 
         this._buildTabs();
+        this._setupMenuButton();
         this._setupResizeHandling();
         if (this._hass) {
             this._initialize();
@@ -293,6 +373,7 @@ class SolarForecastPanel extends HTMLElement {
 
     set hass(hass) {
         this._hass = hass;
+        this._updateMenuVisibility();
         if (!this._connected) {
             return;
         }
@@ -305,11 +386,50 @@ class SolarForecastPanel extends HTMLElement {
     set narrow(value) {
         this._haNarrow = Boolean(value);
         this.classList.toggle("ha-narrow", this._haNarrow);
+        this._updateMenuVisibility();
         this._scheduleChartResize();
     }
 
     get narrow() {
         return this._haNarrow;
+    }
+
+    set panel(panel) {
+        this._panel = panel;
+    }
+
+    get panel() {
+        return this._panel;
+    }
+
+    _setupMenuButton() {
+        const menuBtn = this.shadowRoot.querySelector("#menu-btn");
+        if (!menuBtn) {
+            return;
+        }
+        menuBtn.addEventListener("click", () => this._toggleSidebar());
+        this._updateMenuVisibility();
+    }
+
+    _toggleSidebar() {
+        // Same contract as ha-menu-button / HACS: tell the HA shell to toggle
+        // the main navigation drawer. Must cross shadow DOM boundaries.
+        this.dispatchEvent(
+            new Event("hass-toggle-menu", {
+                bubbles: true,
+                composed: true,
+            })
+        );
+    }
+
+    _updateMenuVisibility() {
+        // Mirror ha-menu-button: show when narrow OR sidebar is always hidden.
+        const docked = this._hass && this._hass.dockedSidebar;
+        const alwaysHidden = docked === "always_hidden";
+        this.classList.toggle(
+            "show-menu",
+            Boolean(this._haNarrow || alwaysHidden)
+        );
     }
 
     _setupResizeHandling() {
@@ -351,6 +471,7 @@ class SolarForecastPanel extends HTMLElement {
         const width = this.clientWidth || this.getBoundingClientRect().width || 0;
         const narrow = width > 0 && width < 900;
         this.classList.toggle("narrow", narrow);
+        this._updateMenuVisibility();
     }
 
     _scheduleChartResize() {
