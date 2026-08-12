@@ -75,6 +75,10 @@ class SolarForecastPanel extends HTMLElement {
         this._dayBuckets = null;
         this._arrayMeta = [];
         this._api = null;
+        this._resizeObserver = null;
+        this._onResize = null;
+        this._resizeRaf = null;
+        this._haNarrow = false;
     }
 
     connectedCallback() {
@@ -87,24 +91,32 @@ class SolarForecastPanel extends HTMLElement {
 <style>
 :host {
   display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
   padding: 16px;
   background: var(--primary-background-color);
   color: var(--primary-text-color);
   font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif);
 }
+*, *::before, *::after { box-sizing: border-box; }
 .plant-bar {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-bottom: 16px;
   flex-wrap: wrap;
+  max-width: 100%;
 }
 .plant-bar label {
   font-size: 14px;
   color: var(--secondary-text-color);
 }
 .plant-bar select {
-  min-width: 220px;
+  min-width: 0;
+  width: min(100%, 280px);
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--divider-color);
@@ -113,15 +125,17 @@ class SolarForecastPanel extends HTMLElement {
 }
 .summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 16px;
   margin-bottom: 20px;
+  max-width: 100%;
 }
 .metric {
   background: var(--card-background-color);
   border-radius: 12px;
   padding: 16px;
   box-shadow: var(--ha-card-box-shadow);
+  min-width: 0;
 }
 .metric-title {
   font-size: 13px;
@@ -131,25 +145,42 @@ class SolarForecastPanel extends HTMLElement {
   font-size: 30px;
   font-weight: 700;
   margin-top: 8px;
+  overflow-wrap: anywhere;
 }
 .metric-unit {
   font-size: 12px;
   color: var(--secondary-text-color);
 }
-.charts-row {
+.charts-row,
+.lower-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   margin-bottom: 16px;
+  max-width: 100%;
+  min-width: 0;
+}
+/* Prefer panel width over viewport so HA sidebar does not break layout */
+:host(.narrow) .charts-row,
+:host(.narrow) .lower-row,
+:host(.ha-narrow) .charts-row,
+:host(.ha-narrow) .lower-row {
+  grid-template-columns: 1fr;
 }
 @media (max-width: 900px) {
-  .charts-row { grid-template-columns: 1fr; }
+  .charts-row,
+  .lower-row {
+    grid-template-columns: 1fr;
+  }
 }
 .panel-card {
   background: var(--card-background-color);
   border-radius: 12px;
   padding: 14px 16px 18px;
   box-shadow: var(--ha-card-box-shadow);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 .section-title {
   font-size: 14px;
@@ -161,6 +192,7 @@ class SolarForecastPanel extends HTMLElement {
   font-weight: 700;
   margin: 0 0 10px 0;
   min-height: 1.2em;
+  overflow-wrap: anywhere;
 }
 .tabs {
   display: flex;
@@ -183,19 +215,20 @@ class SolarForecastPanel extends HTMLElement {
   border-color: var(--primary-color);
 }
 .chart-container {
-  height: 320px;
   position: relative;
+  width: 100%;
+  height: 320px;
+  min-width: 0;
+  overflow: hidden;
 }
 .chart-container.short {
   height: 280px;
 }
-.lower-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-@media (max-width: 900px) {
-  .lower-row { grid-template-columns: 1fr; }
+.chart-container canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100%;
 }
 .status {
   padding: 24px;
@@ -242,6 +275,7 @@ class SolarForecastPanel extends HTMLElement {
 `;
 
         this._buildTabs();
+        this._setupResizeHandling();
         if (this._hass) {
             this._initialize();
         }
@@ -249,6 +283,7 @@ class SolarForecastPanel extends HTMLElement {
 
     disconnectedCallback() {
         this._connected = false;
+        this._teardownResizeHandling();
         this._destroyCharts();
         if (this._timer) {
             clearTimeout(this._timer);
@@ -264,6 +299,78 @@ class SolarForecastPanel extends HTMLElement {
         if (!this._timer) {
             this._initialize();
         }
+    }
+
+    // Home Assistant sets this when the left drawer is collapsed / mobile.
+    set narrow(value) {
+        this._haNarrow = Boolean(value);
+        this.classList.toggle("ha-narrow", this._haNarrow);
+        this._scheduleChartResize();
+    }
+
+    get narrow() {
+        return this._haNarrow;
+    }
+
+    _setupResizeHandling() {
+        this._onResize = () => {
+            this._updateNarrowClass();
+            this._scheduleChartResize();
+        };
+
+        window.addEventListener("resize", this._onResize);
+
+        if (typeof ResizeObserver !== "undefined") {
+            this._resizeObserver = new ResizeObserver(() => this._onResize());
+            this._resizeObserver.observe(this);
+            this.shadowRoot
+                .querySelectorAll(".chart-container")
+                .forEach((el) => this._resizeObserver.observe(el));
+        }
+
+        this._updateNarrowClass();
+    }
+
+    _teardownResizeHandling() {
+        if (this._onResize) {
+            window.removeEventListener("resize", this._onResize);
+            this._onResize = null;
+        }
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+            this._resizeObserver = null;
+        }
+        if (this._resizeRaf) {
+            cancelAnimationFrame(this._resizeRaf);
+            this._resizeRaf = null;
+        }
+    }
+
+    _updateNarrowClass() {
+        // Use panel content width so layout follows available space (HA sidebar open/closed).
+        const width = this.clientWidth || this.getBoundingClientRect().width || 0;
+        const narrow = width > 0 && width < 900;
+        this.classList.toggle("narrow", narrow);
+    }
+
+    _scheduleChartResize() {
+        if (this._resizeRaf) {
+            cancelAnimationFrame(this._resizeRaf);
+        }
+        this._resizeRaf = requestAnimationFrame(() => {
+            this._resizeRaf = null;
+            this._resizeCharts();
+        });
+    }
+
+    _resizeCharts() {
+        this._charts.forEach((chart) => {
+            try {
+                chart.resize();
+            } catch (e) {
+                /* ignore */
+            }
+        });
     }
 
     async _initialize() {
@@ -580,12 +687,6 @@ class SolarForecastPanel extends HTMLElement {
         };
     }
 
-    _makeChart(canvas, config) {
-        const chart = new Chart(canvas.getContext("2d"), config);
-        this._charts.push(chart);
-        return chart;
-    }
-
     _drawAll() {
         this._destroyCharts();
         this._redrawMainAndArrays();
@@ -600,6 +701,21 @@ class SolarForecastPanel extends HTMLElement {
         this._drawArrays();
         this._drawPie();
         this._drawBar();
+        this._scheduleChartResize();
+    }
+
+    _makeChart(canvas, config) {
+        if (!config.options) {
+            config.options = {};
+        }
+        config.options.responsive = true;
+        config.options.maintainAspectRatio = false;
+        // Chart.js observes the canvas parent; keep that in sync with our containers.
+        config.options.resizeDelay = 0;
+
+        const chart = new Chart(canvas.getContext("2d"), config);
+        this._charts.push(chart);
+        return chart;
     }
 
     _drawMain() {
