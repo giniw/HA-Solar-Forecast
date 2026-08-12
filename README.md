@@ -5,10 +5,10 @@ Home Assistant custom integration for [Solar-Forecast.com](https://solar-forecas
 | | |
 |---|---|
 | **Domain** | `solar_forecast_com` |
-| **Version** | 1.1.0 |
+| **Version** | 1.0.0 |
 | **IoT class** | Cloud polling |
 | **Config** | UI config flow (no YAML required) |
-| **API docs** | [solar-forecast.com/api-view.html](https://solar-forecast.com/api-view.html) |
+| **API docs** | [solar-forecast.com/api-view.html](https://solar-forecast.com/api) |
 
 ---
 
@@ -96,6 +96,17 @@ Dependencies declared by the integration: `http`, `frontend`.
 2. Restart Home Assistant.
 
 3. Confirm the integration appears under **Settings → Devices & services → Add integration**.
+
+### Install through HACS
+1. Open **HACS**
+2. Go to the 3 dots. Add repositories.
+3. Enter *https://github.com/giniw/HA-Solar-Forecast*, then **Add**.
+4. Refresh Home Assistant
+5. Look for **HA-Solar-Forecast** inside searchbar of HACS.
+6. Go to **HA-Solar-Forecast** and then **Download**.
+7. Restart Home Assistant.
+8. Confirm the integration appears under **Settings → Devices & services → Add integration**.
+
 
 ### After updating the integration
 
