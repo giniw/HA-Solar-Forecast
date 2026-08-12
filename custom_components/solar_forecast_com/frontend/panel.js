@@ -79,6 +79,9 @@ class SolarForecastPanel extends HTMLElement {
         this._onResize = null;
         this._resizeRaf = null;
         this._haNarrow = false;
+        this._mediaQuery = null;
+        this._onMediaChange = null;
+        this._panel = null;
     }
 
     connectedCallback() {
@@ -135,6 +138,9 @@ class SolarForecastPanel extends HTMLElement {
   flex-shrink: 0;
   -webkit-tap-highlight-color: transparent;
 }
+.menu-btn.visible {
+  display: inline-flex;
+}
 .menu-btn:hover,
 .menu-btn:focus-visible {
   background: rgba(255, 255, 255, 0.12);
@@ -145,15 +151,8 @@ class SolarForecastPanel extends HTMLElement {
   height: 24px;
   fill: currentColor;
 }
-/* Show hamburger when HA says narrow, sidebar always hidden, or panel is narrow */
-:host(.ha-narrow) .menu-btn,
-:host(.show-menu) .menu-btn,
-:host(.narrow) .menu-btn {
-  display: inline-flex;
-}
-@media (max-width: 870px) {
-  .menu-btn { display: inline-flex; }
-}
+/* Visibility is controlled in JS (.visible) so desktop window resize
+   works even when HA has not yet flipped the narrow property. */
 .top-bar-title {
   font-size: 20px;
   font-weight: 400;
@@ -422,14 +421,51 @@ class SolarForecastPanel extends HTMLElement {
         );
     }
 
-    _updateMenuVisibility() {
-        // Mirror ha-menu-button: show when narrow OR sidebar is always hidden.
+    _isViewportNarrow() {
+        // Home Assistant uses ~870px for narrow / mobile chrome.
+        if (this._mediaQuery) {
+            return this._mediaQuery.matches;
+        }
+        return window.matchMedia("(max-width: 870px)").matches;
+    }
+
+    _isPanelNarrow() {
+        const width =
+            this.clientWidth ||
+            (this.getBoundingClientRect && this.getBoundingClientRect().width) ||
+            0;
+        // Slightly above HA's 870 so the button appears as soon as the
+        // content column feels phone-like (e.g. desktop window + docked sidebar).
+        return width > 0 && width < 900;
+    }
+
+    _shouldShowMenuButton() {
         const docked = this._hass && this._hass.dockedSidebar;
         const alwaysHidden = docked === "always_hidden";
-        this.classList.toggle(
-            "show-menu",
-            Boolean(this._haNarrow || alwaysHidden)
+        return Boolean(
+            this._haNarrow ||
+                alwaysHidden ||
+                this._isViewportNarrow() ||
+                this._isPanelNarrow()
         );
+    }
+
+    _updateMenuVisibility() {
+        if (!this.shadowRoot) {
+            return;
+        }
+        const show = this._shouldShowMenuButton();
+        const panelNarrow = this._isPanelNarrow() || this._isViewportNarrow();
+
+        this.classList.toggle("show-menu", show);
+        this.classList.toggle("ha-narrow", Boolean(this._haNarrow));
+        this.classList.toggle("narrow", panelNarrow || Boolean(this._haNarrow));
+
+        const menuBtn = this.shadowRoot.querySelector("#menu-btn");
+        if (menuBtn) {
+            menuBtn.classList.toggle("visible", show);
+            menuBtn.setAttribute("aria-hidden", show ? "false" : "true");
+        }
     }
 
     _setupResizeHandling() {
@@ -439,6 +475,18 @@ class SolarForecastPanel extends HTMLElement {
         };
 
         window.addEventListener("resize", this._onResize);
+
+        // Desktop window resize: matchMedia fires even when element RO is flaky.
+        this._mediaQuery = window.matchMedia("(max-width: 870px)");
+        this._onMediaChange = () => {
+            this._updateMenuVisibility();
+            this._scheduleChartResize();
+        };
+        if (this._mediaQuery.addEventListener) {
+            this._mediaQuery.addEventListener("change", this._onMediaChange);
+        } else if (this._mediaQuery.addListener) {
+            this._mediaQuery.addListener(this._onMediaChange);
+        }
 
         if (typeof ResizeObserver !== "undefined") {
             this._resizeObserver = new ResizeObserver(() => this._onResize());
@@ -456,6 +504,18 @@ class SolarForecastPanel extends HTMLElement {
             window.removeEventListener("resize", this._onResize);
             this._onResize = null;
         }
+        if (this._mediaQuery && this._onMediaChange) {
+            if (this._mediaQuery.removeEventListener) {
+                this._mediaQuery.removeEventListener(
+                    "change",
+                    this._onMediaChange
+                );
+            } else if (this._mediaQuery.removeListener) {
+                this._mediaQuery.removeListener(this._onMediaChange);
+            }
+        }
+        this._mediaQuery = null;
+        this._onMediaChange = null;
         if (this._resizeObserver) {
             this._resizeObserver.disconnect();
             this._resizeObserver = null;
@@ -467,10 +527,6 @@ class SolarForecastPanel extends HTMLElement {
     }
 
     _updateNarrowClass() {
-        // Use panel content width so layout follows available space (HA sidebar open/closed).
-        const width = this.clientWidth || this.getBoundingClientRect().width || 0;
-        const narrow = width > 0 && width < 900;
-        this.classList.toggle("narrow", narrow);
         this._updateMenuVisibility();
     }
 
