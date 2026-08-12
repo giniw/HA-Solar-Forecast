@@ -1,5 +1,9 @@
 # Solar-Forecast.com for Home Assistant
 
+<p align="center">
+  <img src="brand/icon.png" alt="Solar-Forecast.com" width="128" height="128">
+</p>
+
 Home Assistant custom integration for [Solar-Forecast.com](https://solar-forecast.com) — PV production forecasts, multi-array DC output, and uploaded generation, with a built-in sidebar dashboard.
 
 | | |
@@ -87,6 +91,10 @@ Dependencies declared by the integration: `http`, `frontend`.
    ├── energy.py
    ├── forecast_days.py
    ├── api.py
+   ├── brand/
+   │   ├── icon.png
+   │   ├── logo.png
+   │   └── …
    ├── frontend/
    │   ├── panel.js
    │   └── chart.umd.min.js
@@ -454,6 +462,7 @@ logger:
 | `api.py` | API key validation |
 | `const.py` | Domain and upstream URLs |
 | `manifest.json` | Integration metadata |
+| `brand/` | Integration icon & logo (HA Brands Proxy) |
 
 ---
 
