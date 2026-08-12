@@ -3,7 +3,7 @@
   "name": "Solar-Forecast.com",
   "codeowners": ["@Giniw"],
   "config_flow": true,
-  "documentation": "https://solar-forecast.com/api.html",
+  "documentation": "https://solar-forecast.com/api",
   "dependencies": ["http","frontend"],
   "integration_type":"service",
   "iot_class": "cloud_polling",
