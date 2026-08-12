@@ -1,11 +1,11 @@
 {
   "domain": "solar_forecast_com",
   "name": "Solar-Forecast.com",
-  "codeowners": ["@mandy"],
+  "codeowners": ["@Giniw"],
   "config_flow": true,
   "documentation": "https://solar-forecast.com/api-view.html",
   "dependencies": ["http","frontend"],
   "integration_type":"service",
   "iot_class": "cloud_polling",
-  "version": "1.1.0"
+  "version": "1.0.0"
 }
