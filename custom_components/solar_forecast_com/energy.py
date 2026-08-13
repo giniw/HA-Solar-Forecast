@@ -40,7 +40,8 @@ def energy_to_power(energy: dict) -> dict:
         hours = (dt_curr - dt_prev).total_seconds() / 3600.0
         if hours <= 0:
             continue
-        power[ts_curr] = (e_curr - e_prev) / hours
+        # Bad meter resets / out-of-order uploads can yield negative Δenergy.
+        power[ts_curr] = max(0.0, (e_curr - e_prev) / hours)
 
     return power
 
@@ -50,7 +51,7 @@ def latest_power(power: dict) -> float:
     points = _parse_energy_points(power)
     if not points:
         return 0.0
-    return points[-1][2]
+    return max(0.0, points[-1][2])
 
 
 def total_energy_produced(energy: dict) -> float:
