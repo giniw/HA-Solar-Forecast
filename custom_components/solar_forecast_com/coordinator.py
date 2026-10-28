@@ -12,6 +12,7 @@ from homeassistant.helpers.update_coordinator import (
 from .arrays import normalize_arrays
 from .const import API_URL, API_URL_GENERATION, DOMAIN
 from .energy import energy_to_power
+from .history import get_power_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,6 +25,12 @@ class ForecastCoordinator(DataUpdateCoordinator):
             "api_key": api_key,
         }
         self.entry = entry
+        try:
+            self.power_sensor=entry.data["power_sensors"]
+        except KeyError:
+            self.power_sensor=None
+
+        
         super().__init__(
             hass,
             logger=_LOGGER,
@@ -65,6 +72,14 @@ class ForecastCoordinator(DataUpdateCoordinator):
                 else:
                     data["generation_energy"] = {}
                     data["generation"] = {}
+            if self.power_sensor:
+                payload= await get_power_payload(self.hass,self.power_sensor)
+#                _LOGGER.warning("payload: %s",str(payload))
+            
+                async with session.post(
+                    API_URL_GENERATION, params=self.params,
+                json=payload) as response:
+                    response.raise_for_status()
 
             return data
 

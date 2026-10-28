@@ -59,23 +59,23 @@ async def async_setup_entry(hass, entry: ConfigEntry):
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    _LOGGER.warning(
-        "Coordinator %s update_interval=%s",
-        id(coordinator),
-        coordinator.update_interval,
-     )
+#    _LOGGER.warning(
+#        "Coordinator %s update_interval=%s",
+#        id(coordinator),
+#        coordinator.update_interval,
+#     )
 
-    _LOGGER.warning(
-        "Coordinator internals: %s",
-        [k for k in coordinator.__dict__.keys() if "refresh" in k or "unsub" in k]
-     )
+#    _LOGGER.warning(
+#        "Coordinator internals: %s",
+#        [k for k in coordinator.__dict__.keys() if "refresh" in k or "unsub" in k]
+#     )
     
-    _LOGGER.warning(
-        "_unsub_refresh = %s",
-        coordinator._unsub_refresh,
-    )
+#    _LOGGER.warning(
+#        "_unsub_refresh = %s",
+#        coordinator._unsub_refresh,
+#    )
 
-    _LOGGER.warning("Response %s: %s", entry.entry_id ,hass.data[DOMAIN].get(entry.entry_id).data)
+#    _LOGGER.warning("Response %s: %s", entry.entry_id ,hass.data[DOMAIN].get(entry.entry_id).data)
 
     # Load platforms
     await hass.config_entries.async_forward_entry_setups(
@@ -131,16 +131,17 @@ async def async_delete_statistics(
     if not entity_ids:
         return
 
-    await hass.services.async_call(
-        "recorder",
-        "purge_entities",
-        {
-            "entity_id": entity_ids,
-            "keep_days": 0,
-            "repack": False,
-        },
-        blocking=True,
-    )
+    for entity in entity_ids:
+        await hass.services.async_call(
+            "recorder",
+            "purge_entities",
+            {
+                "entity_id": entity,
+                "keep_days": 0,
+              #  "repack": False,
+            },
+            blocking=True,
+        )
 
 
 def _get_entity_ids(hass, entry_id):
@@ -158,13 +159,15 @@ def _get_entity_ids(hass, entry_id):
 
 async def async_unload_entry(hass, entry: ConfigEntry):
     """Unload a config entry."""
-    _LOGGER.warning("UNLOADING %s", entry.entry_id)
+#    _LOGGER.warning("UNLOADING %s", entry.entry_id)
+
+    await async_delete_statistics(hass,entry)
 
     unload_ok = await hass.config_entries.async_unload_platforms(
         entry,
         PLATFORMS,
     )
-    await async_delete_statistics(hass, entry)
+    #await async_delete_statistics(hass, entry)
 
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)

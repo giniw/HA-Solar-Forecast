@@ -1,6 +1,7 @@
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.helpers import selector
 from homeassistant.const import CONF_API_KEY,CONF_NAME
 
 from .api import validate_api_key, AuthenticationError
@@ -52,6 +53,12 @@ class SolarForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_API_KEY): str,
                     vol.Required(CONF_NAME): str,
+                    vol.Optional("Sensor For Sending Production Data"):selector.EntitySelector(
+                         selector.EntitySelectorConfig(
+                             domain="sensor",
+                             device_class="power",
+                         )
+                     ),
                 }
             ),
             errors=errors,
