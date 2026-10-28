@@ -1,7 +1,7 @@
 # Solar-Forecast.com for Home Assistant
 
 <p align="center">
-  <img src="brand/icon.png" alt="Solar-Forecast.com" width="128" height="128">
+  <img src="custom_components/solar_forecast_com/brand/icon.png" alt="Solar-Forecast.com" width="128" height="128">
 </p>
 
 Home Assistant custom integration for [Solar-Forecast.com](https://solar-forecast.com) — PV production forecasts, multi-array DC output, and uploaded generation, with a built-in sidebar dashboard.
