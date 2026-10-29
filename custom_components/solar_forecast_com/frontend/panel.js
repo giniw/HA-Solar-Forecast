@@ -190,6 +190,30 @@ class SolarForecastPanel extends HTMLElement {
   background: var(--card-background-color);
   color: var(--primary-text-color);
 }
+.personalised-toggle {
+  flex-shrink: 0;
+  border: 1px solid var(--divider-color);
+  background: var(--card-background-color);
+  color: var(--primary-text-color);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.personalised-toggle.on {
+  background: var(--primary-color);
+  color: var(--text-primary-color, #fff);
+  border-color: var(--primary-color);
+}
+.personalised-toggle.unavailable,
+.personalised-toggle:disabled {
+  background: #9e9e9e;
+  color: #f0f0f0;
+  border-color: #9e9e9e;
+  cursor: not-allowed;
+  opacity: 0.85;
+}
 .summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -316,6 +340,9 @@ class SolarForecastPanel extends HTMLElement {
 <div class="plant-bar">
   <label for="plant-select">Plant</label>
   <select id="plant-select"></select>
+  <button type="button" class="personalised-toggle unavailable" id="personalised-toggle" aria-pressed="false" disabled>
+    Switch to Personalised Forecast
+  </button>
 </div>
 
 <div id="summary" class="summary"></div>
@@ -354,6 +381,7 @@ class SolarForecastPanel extends HTMLElement {
 
         this._buildTabs();
         this._setupMenuButton();
+        this._setupPersonalisedToggle();
         this._setupResizeHandling();
         if (this._hass) {
             this._initialize();
@@ -564,6 +592,7 @@ class SolarForecastPanel extends HTMLElement {
 
         if (!this._entries.length) {
             this._selectedEntry = null;
+            this._syncPersonalisedToggle(null);
             this._setStatus("No Solar Forecast plants configured.");
             return;
         }
@@ -591,6 +620,54 @@ class SolarForecastPanel extends HTMLElement {
             this._buildTabs();
             this._update();
         };
+    }
+
+    _setupPersonalisedToggle() {
+        const btn = this.shadowRoot.querySelector("#personalised-toggle");
+        if (!btn) {
+            return;
+        }
+        btn.addEventListener("click", () => this._togglePersonalised());
+    }
+
+    _syncPersonalisedToggle(api) {
+        const btn = this.shadowRoot.querySelector("#personalised-toggle");
+        if (!btn) {
+            return;
+        }
+        const has = Boolean(api && api.has_personalised);
+        const on = Boolean(api && api.use_personalised) && has;
+        btn.classList.toggle("on", on);
+        btn.classList.toggle("unavailable", !has);
+        btn.disabled = !has;
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+        btn.title = has
+            ? on
+                ? "Personalised forecast is on for the Energy dashboard"
+                : "Switch the Energy dashboard to personalised forecast"
+            : "Personalised forecast is not available";
+    }
+
+    async _togglePersonalised() {
+        if (!this._hass || !this._selectedEntry) {
+            return;
+        }
+        const btn = this.shadowRoot.querySelector("#personalised-toggle");
+        if (!btn || btn.disabled) {
+            return;
+        }
+        const next = btn.getAttribute("aria-pressed") !== "true";
+        try {
+            await this._hass.callApi(
+                "POST",
+                `solar_forecast/${this._selectedEntry}/personalised`,
+                { enabled: next }
+            );
+            this._lastData = "";
+            await this._update();
+        } catch (err) {
+            console.error(err);
+        }
     }
 
     _buildTabs() {
@@ -654,6 +731,7 @@ class SolarForecastPanel extends HTMLElement {
             return;
         }
         if (!this._selectedEntry) {
+            this._syncPersonalisedToggle(null);
             this._setStatus("No Solar Forecast plants configured.");
             return;
         }
@@ -670,6 +748,7 @@ class SolarForecastPanel extends HTMLElement {
             }
 
             this._setStatus("");
+            this._syncPersonalisedToggle(api);
             this._renderSummary(api);
 
             const fingerprint = JSON.stringify({
@@ -681,6 +760,8 @@ class SolarForecastPanel extends HTMLElement {
                 arrays: api.arrays,
                 ArrayDayTotals: api.ArrayDayTotals,
                 Next3Days: api.Next3Days,
+                use_personalised: api.use_personalised,
+                has_personalised: api.has_personalised,
             });
 
             if (fingerprint === this._lastData && this._charts.length > 0) {
