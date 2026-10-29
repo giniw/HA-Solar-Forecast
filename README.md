@@ -4,7 +4,7 @@
   <img src="custom_components/solar_forecast_com/brand/icon.png" alt="Solar-Forecast.com" width="128" height="128">
 </p>
 
-Home Assistant custom integration for [Solar-Forecast.com](https://solar-forecast.com) — PV production forecasts, multi-array DC output, and uploaded generation, with a built-in sidebar dashboard.
+Home Assistant custom integration for [Solar-Forecast.com](https://solar-forecast.com) — PV production forecasts, multi-array DC output, and generation (uploaded or local sensor history), with a built-in sidebar dashboard.
 
 | | |
 |---|---|
@@ -23,20 +23,26 @@ Home Assistant custom integration for [Solar-Forecast.com](https://solar-forecas
 - Site total AC forecast (`kWatt`), clear-sky expectation, and optional personalised forecast
 - **Multi-array** support: per-array DC series (`array_1_kWatt` … `array_N_kWatt`) and metadata from `system_info.arrays`
 - Day energy totals (kWh) computed from 15‑minute power samples (× 0.25 h)
+- Rolling-window energy (next 15 minutes / 1 / 3 / 6 hours) and **power forecast now**, from `kWatt` or `personalised_kWatt`
 
 ### Generation
-- Reads cumulative energy uploaded to Solar-Forecast.com (`GET /generation`)
-- Converts cumulative kWh → interval power (kW) for charts and sensors
+- Optional **production power sensor** selected at setup
+- Optional **Send production data to solar-forecast.com** checkbox:
+  - **On:** upload sensor history (`POST /generation`), then show generation from the cloud (`GET /generation`)
+  - **Off:** do not upload; the dashboard and generation sensors use local Home Assistant recorder history
+- Converts cumulative kWh → interval power (kW) when reading cloud generation
 - Negative power from bad/out-of-order meter data is **clamped to 0**
 
 ### Home Assistant entities
 - Energy and power sensors with proper device classes (kWh / kW)
 - One **device** per config entry (plant), with entry-scoped unique IDs
 - Dynamic per-array day-energy sensors when the site has multiple arrays
+- Rolling forecast sensors follow the personalised-forecast switch
 
 ### Sidebar panel
 - Custom sidebar item **Solar Forecast** (`mdi:solar-power`)
 - Plant selector when multiple config entries are configured
+- **Switch to Personalised Forecast** on/off next to the plant dropdown (gray / disabled when `personalised_kWatt` is empty)
 - Layout aligned with the website `/index` dashboard:
   - Summary cards (site + per-array today)
   - Main charts: Forecast / Clear Sky / Generation (and Personalised when present)
@@ -61,7 +67,7 @@ Home Assistant custom integration for [Solar-Forecast.com](https://solar-forecas
   - An **API key** (from the website after login)
 - Network access from Home Assistant to `https://solar-forecast.com`
 
-Dependencies declared by the integration: `http`, `frontend`.
+Dependencies declared by the integration: `http`, `frontend`. Recorder is an after-dependency (used for local generation history).
 
 ---
 
@@ -90,7 +96,10 @@ Dependencies declared by the integration: `http`, `frontend`.
    ├── arrays.py
    ├── energy.py
    ├── forecast_days.py
+   ├── history.py
    ├── api.py
+   ├── strings.json
+   ├── translations/
    ├── brand/
    │   ├── icon.png
    │   ├── logo.png
@@ -143,9 +152,13 @@ Dependencies declared by the integration: `http`, `frontend`.
    | Field | Meaning |
    |-------|---------|
    | **API key** | Key from Solar-Forecast.com |
-   | **Name** / identifier | Friendly plant name shown as the config entry title and device name (e.g. `Home Roof`, `Warehouse East`) |
+   | **Name** | Friendly plant name shown as the config entry title and device name (e.g. `Home Roof`, `Warehouse East`) |
+   | **Production power sensor** | Optional HA power sensor used for the Generation series |
+   | **Send production data to solar-forecast.com** | If enabled, sensor history is uploaded and the dashboard reads generation from the cloud. If disabled, generation is taken from local sensor history only. |
 
 5. Submit. The key is validated against `GET https://solar-forecast.com/forecast?api_key=...`.
+
+You can change the power sensor and send-data checkbox later: **Settings → Devices & services → Solar-Forecast.com → Configure**.
 
 On success you get:
 
@@ -160,7 +173,7 @@ Repeat **Add integration** with a different API key and name. Each entry is inde
 
 ### 4. Open the dashboard panel
 
-In the Home Assistant sidebar, open **Solar Forecast**. Choose a plant if you have more than one.
+In the Home Assistant sidebar, open **Solar Forecast**. Choose a plant if you have more than one. Use **Switch to Personalised Forecast** to feed `personalised_kWatt` into the Energy dashboard and the rolling forecast sensors (the button is gray when no personalised series is available).
 
 ---
 
@@ -172,13 +185,20 @@ Entity names are prefixed with the plant device name. Unique IDs are scoped by c
 
 | Sensor (name suffix) | Unit | Class | Description |
 |----------------------|------|-------|-------------|
-| Todays Forecast Sensor | kWh | Energy | Forecast energy for local today |
-| Tomorrows Forecast Sensor | kWh | Energy | Forecast energy for tomorrow |
-| Day Afters Forecast Sensor | kWh | Energy | Forecast energy for day after tomorrow |
-| Generation Now | kW | Power | Latest interval power from uploaded generation |
-| Total Generation | kWh | Energy | Energy produced over today’s uploaded generation window |
+| Todays Forecast Sensor | kWh | Energy | Forecast energy for local today (`kWatt`) |
+| Tomorrows Forecast Sensor | kWh | Energy | Forecast energy for tomorrow (`kWatt`) |
+| Day Afters Forecast Sensor | kWh | Energy | Forecast energy for day after tomorrow (`kWatt`) |
+| Energy Next 15 Minutes | kWh | Energy | Forecast energy from now through the next 15 minutes |
+| Energy Next Hour | kWh | Energy | Forecast energy from now through the next 60 minutes |
+| Energy Next 3 Hours | kWh | Energy | Forecast energy from now through the next 3 hours |
+| Energy Next 6 Hours | kWh | Energy | Forecast energy from now through the next 6 hours |
+| Power Forecast Now | kW | Power | Forecast power for the current 15-minute interval |
+| Generation Now | kW | Power | Latest interval power from generation (cloud or local history) |
+| Total Generation | kWh | Energy | Energy produced over the generation window |
 
 Day energy is Σ(power_kW) × 0.25 over timestamps belonging to that local calendar day.
+
+Rolling-window sensors (**Energy Next …**, **Power Forecast Now**) use `personalised_kWatt` when **Switch to Personalised Forecast** is on, otherwise `kWatt`. Each power sample is held until the next sample (15 minutes for the last point); overlapping intervals are counted proportionally. Attributes include `window_minutes` (energy sensors) and `forecast_source`.
 
 ### Per-array (created dynamically)
 
@@ -194,8 +214,9 @@ Attributes on array sensors include `array`, `capacity_kw`, `tilt`, and `orienta
 
 ### Notes
 
-- Sensors update when the coordinator refreshes (~every 15 minutes).
+- Sensors update when the coordinator refreshes (~every 15 minutes). Rolling forecast sensors also update when you toggle **Switch to Personalised Forecast**.
 - If arrays are added later on Solar-Forecast.com, **reload the integration** (or restart HA) so new array sensors are created.
+- After adding this integration version, **reload** so Energy Next / Power Forecast Now entities appear.
 - Removing/unloading a config entry purges those entities’ recorder history and removes them from the entity registry.
 
 ---
@@ -258,9 +279,11 @@ sensor:
 
 ### Upload generation to Solar-Forecast.com
 
-Generation is stored on Solar-Forecast.com (not pushed through a Home Assistant service). From HA you can call their HTTP API with `rest_command` or an automation.
+If you enabled **Send production data to solar-forecast.com** and selected a production power sensor, the coordinator uploads that sensor’s history (`POST /generation`) on each refresh, then reads generation back (`GET /generation`) for the dashboard and sensors.
 
-**POST cumulative energy (kWh):**
+If sending is **off**, nothing is posted; **Generation Now**, **Total Generation**, and the panel Generation series come from local recorder history of the power sensor (today).
+
+You can still call the upstream API yourself with `rest_command` if you want a custom upload:
 
 ```text
 POST https://solar-forecast.com/generation?api_key=YOUR_KEY&energy=12.5
@@ -269,37 +292,15 @@ POST https://solar-forecast.com/generation?api_key=YOUR_KEY&energy=12.5&datetime
 
 Optional `datetime` format: `%Y-%m-%d %H:%M:%S` (site local time). Success body is plain text `success`.
 
-Example `rest_command` in `configuration.yaml`:
-
-```yaml
-rest_command:
-  solar_forecast_upload_generation:
-    url: "https://solar-forecast.com/generation"
-    method: POST
-    content_type: "application/json"
-    # Body unused by the API; params carry the payload
-    # Prefer query params via templated URL:
-```
-
-Better pattern — templated URL:
-
 ```yaml
 rest_command:
   solar_forecast_upload_generation:
     url: >-
       https://solar-forecast.com/generation?api_key={{ api_key }}&energy={{ energy }}{% if datetime %}&datetime={{ datetime | urlencode }}{% endif %}
     method: POST
-
-# Call from an automation:
-# service: rest_command.solar_forecast_upload_generation
-# data:
-#   api_key: !secret solar_forecast_api_key
-#   energy: "{{ states('sensor.inverter_daily_energy') }}"
 ```
 
-After upload, the next coordinator poll (or `homeassistant.update_entity`) refreshes **Generation Now** and **Total Generation**, and the panel’s Generation series.
-
-**GET today’s generation** (what the integration uses):
+**GET today’s generation:**
 
 ```text
 GET https://solar-forecast.com/generation?api_key=YOUR_KEY
@@ -317,6 +318,14 @@ GET https://solar-forecast.com/generation?api_key=YOUR_KEY
 | Frontend assets | `/solar_forecast/panel.js`, `/solar_forecast/chart.umd.min.js` |
 
 The panel calls authenticated Home Assistant REST helpers (see below). Charts use Chart.js (vendored).
+
+**Personalised forecast switch**
+
+- Label: **Switch to Personalised Forecast** (on/off), beside the plant dropdown
+- **On:** Energy dashboard `wh_hours`, panel day totals, and rolling forecast sensors use `personalised_kWatt`
+- **Off:** they use `kWatt`
+- **Gray / disabled:** `personalised_kWatt` is missing or empty
+- Preference is stored per plant (config entry options)
 
 **Charts**
 
@@ -336,6 +345,7 @@ These endpoints require a normal Home Assistant auth token (same as other `/api/
 |--------|------|-------------|
 | `GET` | `/api/solar_forecast/entries` | List config entries `{ entry_id, title }` |
 | `GET` | `/api/solar_forecast/{entry_id}` | Full forecast payload for one plant + summary fields |
+| `POST` | `/api/solar_forecast/{entry_id}/personalised` | Body `{ "enabled": true\|false }` — toggle personalised forecast |
 | `GET` | `/api/solar_forecast/entities` | Map of this integration’s `unique_id` → `entity_id` |
 
 ### Summary fields on `/api/solar_forecast/{entry_id}`
@@ -344,11 +354,13 @@ In addition to raw API series (`kWatt`, `clearsky_kWatt`, `personalised_kWatt`, 
 
 | Field | Meaning |
 |-------|---------|
-| `TodaysForecast` / `TomorrowsForecast` / `DayAftersForecast` | Site day energy (kWh) |
+| `TodaysForecast` / `TomorrowsForecast` / `DayAftersForecast` | Site day energy (kWh); from `personalised_kWatt` when the switch is on |
 | `GenerationNow` | Latest generation power (kW) |
-| `TotalGeneration` | Uploaded generation energy total (kWh) |
+| `TotalGeneration` | Generation energy total (kWh) |
 | `ArrayDayTotals` | Per-array `{ today, tomorrow, day_after, label, color }` |
 | `Next3Days` | `[today, tomorrow, day_after]` site kWh list |
+| `has_personalised` | Whether `personalised_kWatt` has samples |
+| `use_personalised` | Whether the personalised switch is on for this plant |
 
 Example:
 
@@ -367,7 +379,8 @@ Used by the coordinator:
 | Call | Purpose |
 |------|---------|
 | `GET /forecast?api_key=...` | Multi-array power forecast + `system_info` |
-| `GET /generation?api_key=...` | Today’s uploaded cumulative `energy_kWh` |
+| `GET /generation?api_key=...` | Today’s uploaded cumulative `energy_kWh` (when sending is enabled) |
+| `POST /generation?api_key=...` | Upload power-sensor history (when sending is enabled and a sensor is set) |
 
 Forecast series keys include:
 
@@ -386,6 +399,8 @@ Full documentation: [solar-forecast.com API](https://solar-forecast.com/api-view
 
 `energy.py` exposes `async_get_solar_forecast()` so Home Assistant’s **Energy** dashboard can consume a solar production forecast for a config entry (Wh per hour).
 
+The series used is `kWatt`, or `personalised_kWatt` when **Switch to Personalised Forecast** is on for that plant.
+
 To use it (when supported by your HA version):
 
 1. Ensure the plant config entry is loaded and returning forecast data.
@@ -400,15 +415,15 @@ If the forecast does not appear, confirm `datetime_utc` is present in the API re
 
 ```text
 Solar-Forecast.com
-  GET /forecast  ──┐
-  GET /generation ─┼─► ForecastCoordinator (15 min)
-                   │         │
-                   │         ├─► Sensors (energy / power / per-array)
-                   │         └─► hass.data[DOMAIN][entry_id]
-                   │
+  GET /forecast                ──┐
+  POST /generation (if sending) ─┼─► ForecastCoordinator (15 min)
+  GET  /generation (if sending) ─┤         │
+                                 │         ├─► Sensors (energy / power / per-array)
+HA recorder history              │         └─► hass.data[DOMAIN][entry_id]
+  (if not sending)           ────┘
+                                 │
 HA Panel ──GET /api/solar_forecast/{entry_id}──► enriched coordinator JSON
-                   │
-Optional: POST /generation (from inverter via rest_command / external script)
+        ──POST /api/solar_forecast/{entry_id}/personalised
 ```
 
 ---
@@ -428,7 +443,8 @@ Optional: POST /generation (from inverter via rest_command / external script)
 |---------|----------------|
 | Setup fails with invalid auth | API key wrong or revoked; test `/forecast?api_key=...` in a browser |
 | Setup fails with cannot connect | HA cannot reach `solar-forecast.com` (DNS/firewall/SSL) |
-| No generation on charts | Nothing uploaded yet via `POST /generation`; GET generation returns `{}` |
+| No generation on charts | Sending on: nothing uploaded yet / GET generation empty. Sending off: no power sensor, or recorder has no history |
+| Personalised switch is gray | API returned no `personalised_kWatt` samples for this plant |
 | Negative power was shown | Fixed in 1.1.x (clamped to 0); reload integration |
 | Array sensors missing | Site may be single-array; or reload after arrays were added on the website |
 | Panel blank / old UI | Hard-refresh browser; confirm `/solar_forecast/panel.js` loads |
@@ -451,16 +467,18 @@ logger:
 | Path | Role |
 |------|------|
 | `__init__.py` | Setup, static paths, views, panel, unload/purge |
-| `config_flow.py` | UI setup (API key + plant name) |
-| `coordinator.py` | Poll forecast + generation |
-| `sensor.py` | Site and per-array sensors |
-| `views.py` | HA REST API for the panel |
+| `config_flow.py` | UI setup and options (API key, plant name, power sensor, send-data) |
+| `coordinator.py` | Poll forecast; upload/fetch generation or load local history |
+| `sensor.py` | Site, rolling-window, generation, and per-array sensors |
+| `views.py` | HA REST API for the panel (including personalised toggle) |
 | `panel.py` / `frontend/panel.js` | Sidebar dashboard |
 | `arrays.py` | Multi-array discovery / metadata |
 | `energy.py` | Generation→power helpers + Energy forecast hook |
-| `forecast_days.py` | Local-day kWh totals |
+| `forecast_days.py` | Local-day and rolling-window energy / power-now |
+| `history.py` | Recorder history → kW payload for the production sensor |
 | `api.py` | API key validation |
-| `const.py` | Domain and upstream URLs |
+| `const.py` | Domain, upstream URLs, config keys |
+| `strings.json` / `translations/` | Config flow labels |
 | `manifest.json` | Integration metadata |
 | `brand/` | Integration icon & logo (HA Brands Proxy) |
 
