@@ -8,9 +8,9 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .arrays import array_series_key, normalize_arrays
-from .const import DOMAIN
-from .energy import latest_power, total_energy_produced
-from .forecast_days import energy_for_local_day
+from .const import CONF_USE_PERSONALISED, DOMAIN
+from .energy import forecast_power_timeline, latest_power, total_energy_produced
+from .forecast_days import energy_for_local_day, energy_for_upcoming, power_forecast_now
 import logging
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,6 +39,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
         TodayForecastSensor(coordinator),
         TomorrowForecastSensor(coordinator),
         DayAfterForecastSensor(coordinator),
+        EnergyNext15MinutesSensor(coordinator),
+        EnergyNextHourSensor(coordinator),
+        EnergyNext3HoursSensor(coordinator),
+        EnergyNext6HoursSensor(coordinator),
+        PowerForecastNowSensor(coordinator),
         GenerationSensor(coordinator),
         TotalGenerationSensor(coordinator),
     ]
@@ -130,6 +135,118 @@ class DayAfterForecastSensor(CoordinatorEntity, SensorEntity):
             self.coordinator.data.get("kWatt", {}),
             day_offset=2,
         )
+
+    @property
+    def device_info(self):
+        return _device_info(self.coordinator)
+
+
+def _use_personalised(coordinator) -> bool:
+    return bool(coordinator.entry.options.get(CONF_USE_PERSONALISED, False))
+
+
+class _UpcomingEnergySensor(CoordinatorEntity, SensorEntity):
+    """Forecast energy over a rolling window from now."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_should_poll = False
+    _attr_suggested_display_precision = 2
+
+    _minutes: int = 60
+    _uid_suffix: str = "energy_next_hour"
+    _name: str = "Energy Next Hour"
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self._attr_unique_id = (
+            f"{coordinator.entry.entry_id}_{self._uid_suffix}"
+        )
+        self._attr_name = self._name
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        use_personalised = _use_personalised(self.coordinator)
+        return energy_for_upcoming(
+            forecast_power_timeline(self.coordinator.data, use_personalised),
+            self._minutes,
+        )
+
+    @property
+    def extra_state_attributes(self):
+        use_personalised = _use_personalised(self.coordinator)
+        return {
+            "window_minutes": self._minutes,
+            "forecast_source": (
+                "personalised_kWatt" if use_personalised else "kWatt"
+            ),
+        }
+
+    @property
+    def device_info(self):
+        return _device_info(self.coordinator)
+
+
+class EnergyNext15MinutesSensor(_UpcomingEnergySensor):
+    _minutes = 15
+    _uid_suffix = "energy_next_15min"
+    _name = "Energy Next 15 Minutes"
+
+
+class EnergyNextHourSensor(_UpcomingEnergySensor):
+    _minutes = 60
+    _uid_suffix = "energy_next_hour"
+    _name = "Energy Next Hour"
+
+
+class EnergyNext3HoursSensor(_UpcomingEnergySensor):
+    _minutes = 180
+    _uid_suffix = "energy_next_3hour"
+    _name = "Energy Next 3 Hours"
+
+
+class EnergyNext6HoursSensor(_UpcomingEnergySensor):
+    _minutes = 360
+    _uid_suffix = "energy_next_6hour"
+    _name = "Energy Next 6 Hours"
+
+
+class PowerForecastNowSensor(CoordinatorEntity, SensorEntity):
+    """Forecast power for the current 15-minute interval."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_should_poll = False
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_power_forecast_now"
+        self._attr_name = "Power Forecast Now"
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        use_personalised = _use_personalised(self.coordinator)
+        return power_forecast_now(
+            forecast_power_timeline(self.coordinator.data, use_personalised)
+        )
+
+    @property
+    def extra_state_attributes(self):
+        use_personalised = _use_personalised(self.coordinator)
+        return {
+            "forecast_source": (
+                "personalised_kWatt" if use_personalised else "kWatt"
+            ),
+        }
 
     @property
     def device_info(self):

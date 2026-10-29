@@ -98,6 +98,26 @@ def selected_forecast_power(data: dict | None, use_personalised: bool) -> dict:
     return payload.get("kWatt") or {}
 
 
+def forecast_power_timeline(
+    data: dict | None,
+    use_personalised: bool = False,
+) -> dict[str, float]:
+    """Selected power forecast keyed by ISO timestamps."""
+    payload = data or {}
+    series = selected_forecast_power(payload, use_personalised)
+    timestamps = payload.get("datetime_utc") or {}
+    timeline = {}
+    for key, value in series.items():
+        dt = _wh_timestamp(key, timestamps)
+        if dt is None:
+            continue
+        try:
+            timeline[dt.isoformat()] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return timeline
+
+
 def _wh_timestamp(key, timestamps: dict) -> datetime | None:
     """Resolve a series key to a UTC datetime."""
     if timestamps and key in timestamps:

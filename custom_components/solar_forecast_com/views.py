@@ -180,6 +180,8 @@ class SolarForecastPersonalisedView(HomeAssistantView):
                 CONF_USE_PERSONALISED: enabled,
             },
         )
+        if coordinator.data is not None:
+            coordinator.async_set_updated_data(coordinator.data)
         return self.json(
             {
                 "has_personalised": has_personalised,
