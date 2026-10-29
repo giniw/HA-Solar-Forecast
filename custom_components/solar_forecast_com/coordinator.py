@@ -26,7 +26,7 @@ class ForecastCoordinator(DataUpdateCoordinator):
         }
         self.entry = entry
         try:
-            self.power_sensor=entry.data["power_sensors"]
+            self.power_sensor=entry.data["Sensor For Sending Production Data"]
         except KeyError:
             self.power_sensor=None
 
