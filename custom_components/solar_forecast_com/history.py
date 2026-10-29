@@ -1,26 +1,41 @@
-from datetime import timedelta
-import logging
+from datetime import datetime, timedelta
+
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.history import (
     state_changes_during_period,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.const import UnitOfPower
+from homeassistant.core import HomeAssistant, State
 from homeassistant.util import dt as dt_util
 
-_LOGGER = logging.getLogger(__name__)
+
+def _to_kw(state: State) -> float | None:
+    """Convert a power sensor state to kilowatts."""
+    try:
+        value = float(state.state)
+    except (ValueError, TypeError):
+        return None
+
+    unit = (state.attributes or {}).get("unit_of_measurement")
+    if unit in (UnitOfPower.KILO_WATT, "kW"):
+        return value
+    if unit in (UnitOfPower.MEGA_WATT, "MW"):
+        return value * 1000.0
+    # Watts, or unknown units (previous behaviour assumed W).
+    return value / 1000.0
 
 
 async def get_power_payload(
     hass: HomeAssistant,
     entity_id: str,
+    start_time: datetime | None = None,
 ) -> dict:
-    """Fetch power sensor history and return the payload."""
+    """Fetch power sensor history and return timestamp -> kW."""
 
-    # Calculate time range
     end_time = dt_util.utcnow()
-    start_time = end_time - timedelta(hours=24)
+    if start_time is None:
+        start_time = end_time - timedelta(hours=24)
 
-    # Fetch history from Home Assistant recorder
     history = await get_instance(hass).async_add_executor_job(
         state_changes_during_period,
         hass,
@@ -29,23 +44,15 @@ async def get_power_payload(
         entity_id,
         None,
         True,  # include_start_time
-        #True,  # significant_changes_only
     )
 
     states = history.get(entity_id, [])
-    _LOGGER.warning("payload: %s",str(states))
     data = {}
 
     for state in states:
-        try:
-            power = float(state.state)/1000
-        except (ValueError, TypeError):
+        power = _to_kw(state)
+        if power is None:
             continue
+        data[state.last_updated.isoformat()] = power
 
-        data[state.last_updated.isoformat()]= power
-     
-
-    # Construct payload
-    payload = data
-
-    return payload
+    return data

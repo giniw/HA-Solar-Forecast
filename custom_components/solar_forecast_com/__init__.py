@@ -59,6 +59,8 @@ async def async_setup_entry(hass, entry: ConfigEntry):
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
 #    _LOGGER.warning(
 #        "Coordinator %s update_interval=%s",
 #        id(coordinator),
@@ -119,6 +121,11 @@ async def async_setup_entry(hass, entry: ConfigEntry):
 
 
     return True
+
+async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry):
+    """Reload when the user changes options (sensor / send-generation)."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
 
 async def async_delete_statistics(
     hass: HomeAssistant,

@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Solar-Forecast.com",
+        "description": "Enter your API key. Optionally pick a production power sensor, and choose whether Home Assistant should upload that history to solar-forecast.com.",
+        "data": {
+          "api_key": "API key",
+          "name": "Name",
+          "Sensor For Sending Production Data": "Production power sensor",
+          "send_generation_data": "Send production data to solar-forecast.com"
+        },
+        "data_description": {
+          "Sensor For Sending Production Data": "Used for the Generation series on the dashboard. Also uploaded when sending is enabled.",
+          "send_generation_data": "When enabled, sensor history is uploaded and the dashboard shows generation from solar-forecast.com. When disabled, the dashboard uses local sensor history only."
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid API key",
+      "cannot_connect": "Could not connect to solar-forecast.com"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Generation data",
+        "description": "Choose a production power sensor and whether to upload its history to solar-forecast.com.",
+        "data": {
+          "Sensor For Sending Production Data": "Production power sensor",
+          "send_generation_data": "Send production data to solar-forecast.com"
+        },
+        "data_description": {
+          "Sensor For Sending Production Data": "Used for the Generation series on the dashboard. Also uploaded when sending is enabled.",
+          "send_generation_data": "When enabled, sensor history is uploaded and the dashboard shows generation from solar-forecast.com. When disabled, the dashboard uses local sensor history only."
+        }
+      }
+    }
+  }
+}

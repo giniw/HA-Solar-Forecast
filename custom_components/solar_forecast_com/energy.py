@@ -46,6 +46,26 @@ def energy_to_power(energy: dict) -> dict:
     return power
 
 
+def power_to_energy(power: dict) -> dict:
+    """Integrate instantaneous power (kW) to cumulative energy (kWh).
+
+    Each sample is held until the next timestamp (rectangular integration).
+    """
+    points = _parse_energy_points(power)
+    energy = {}
+    cumulative = 0.0
+
+    for i, (dt, ts, _val) in enumerate(points):
+        if i > 0:
+            dt_prev, _, p_prev = points[i - 1]
+            hours = (dt - dt_prev).total_seconds() / 3600.0
+            if hours > 0:
+                cumulative += max(0.0, p_prev) * hours
+        energy[ts] = cumulative
+
+    return energy
+
+
 def latest_power(power: dict) -> float:
     """Return the most recent power value (kW), or 0 if empty."""
     points = _parse_energy_points(power)
