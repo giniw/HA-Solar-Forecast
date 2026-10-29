@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 import logging
 
-from .const import DOMAIN
+from .const import CONF_USE_PERSONALISED, DOMAIN
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,24 +82,61 @@ def total_energy_produced(energy: dict) -> float:
     return points[-1][2] - points[0][2]
 
 
-def forecast_to_wh_hours(data: dict) -> dict[str, float]:
+def has_personalised_forecast(data: dict | None) -> bool:
+    """Return True when personalised_kWatt has at least one sample."""
+    series = (data or {}).get("personalised_kWatt") or {}
+    return isinstance(series, dict) and len(series) > 0
+
+
+def selected_forecast_power(data: dict | None, use_personalised: bool) -> dict:
+    """Return the power series used for Energy dashboard / day totals."""
+    payload = data or {}
+    if use_personalised:
+        series = payload.get("personalised_kWatt") or {}
+        if isinstance(series, dict) and series:
+            return series
+    return payload.get("kWatt") or {}
+
+
+def _wh_timestamp(key, timestamps: dict) -> datetime | None:
+    """Resolve a series key to a UTC datetime."""
+    if timestamps and key in timestamps:
+        try:
+            return datetime.fromtimestamp(
+                timestamps[key] / 1000,
+                tz=timezone.utc,
+            )
+        except (TypeError, ValueError, OSError, OverflowError):
+            pass
+    try:
+        dt = datetime.fromisoformat(str(key))
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def forecast_to_wh_hours(
+    data: dict,
+    use_personalised: bool = False,
+) -> dict[str, float]:
     """Convert coordinator data to Home Assistant wh_hours format."""
     _LOGGER.warning("energy_db data: %s", data)
     result = {}
 
-    power = data["kWatt"]
-    timestamps = data["datetime_utc"]
+    power = selected_forecast_power(data, use_personalised)
+    timestamps = data.get("datetime_utc") or {}
 
     for key in sorted(power):
-        dt = datetime.fromtimestamp(
-            timestamps[key] / 1000,
-            tz=timezone.utc,
-        )
-
-        # kW × 0.25 h = kWh
-        # convert kWh -> Wh
-        wh = float(power[key]) * 0.25 * 1000
-
+        dt = _wh_timestamp(key, timestamps)
+        if dt is None:
+            continue
+        try:
+            # kW × 0.25 h = kWh, then kWh -> Wh
+            wh = float(power[key]) * 0.25 * 1000
+        except (TypeError, ValueError):
+            continue
         result[dt.isoformat()] = round(wh, 2)
 
     return result
@@ -125,6 +162,12 @@ async def async_get_solar_forecast(
     if coordinator.data is None:
         return None
 
+    use_personalised = bool(
+        coordinator.entry.options.get(CONF_USE_PERSONALISED, False)
+    )
     return {
-        "wh_hours": forecast_to_wh_hours(coordinator.data)
+        "wh_hours": forecast_to_wh_hours(
+            coordinator.data,
+            use_personalised=use_personalised,
+        )
     }

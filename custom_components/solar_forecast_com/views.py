@@ -7,19 +7,28 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .arrays import array_series_key, normalize_arrays
-from .const import DOMAIN
-from .energy import latest_power, total_energy_produced
+from .const import CONF_USE_PERSONALISED, DOMAIN
+from .energy import (
+    has_personalised_forecast,
+    latest_power,
+    selected_forecast_power,
+    total_energy_produced,
+)
 from .forecast_days import energy_for_local_day
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _enrich_payload(raw: dict | None) -> dict:
+def _enrich_payload(raw: dict | None, *, use_personalised: bool = False) -> dict:
     """Add summary fields used by the panel."""
     data = dict(raw or {})
-    forecast = data.get("kWatt", {}) or {}
+    has_personalised = has_personalised_forecast(data)
+    effective = bool(use_personalised) and has_personalised
+    forecast = selected_forecast_power(data, effective)
     arrays = data.get("arrays") or normalize_arrays(data)
     data["arrays"] = arrays
+    data["has_personalised"] = has_personalised
+    data["use_personalised"] = bool(use_personalised)
 
     data["TodaysForecast"] = energy_for_local_day(forecast, day_offset=0)
     data["TomorrowsForecast"] = energy_for_local_day(forecast, day_offset=1)
@@ -82,7 +91,12 @@ class SolarForecastView(HomeAssistantView):
         if coordinator is None:
             return self.json({"error": "Unknown entry"}, status_code=404)
 
-        return self.json(_enrich_payload(coordinator.data))
+        use_personalised = bool(
+            coordinator.entry.options.get(CONF_USE_PERSONALISED, False)
+        )
+        return self.json(
+            _enrich_payload(coordinator.data, use_personalised=use_personalised)
+        )
 
 
 class SolarForecastEntitiesView(HomeAssistantView):
@@ -127,3 +141,48 @@ class SolarForecastEntriesView(HomeAssistantView):
         ]
 
         return self.json(entries)
+
+
+class SolarForecastPersonalisedView(HomeAssistantView):
+    """Toggle personalised forecast for the Energy dashboard."""
+
+    url = "/api/solar_forecast/{entry_id}/personalised"
+    name = "api:solar_forecast_personalised"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        hass: HomeAssistant = request.app["hass"]
+        coordinator = hass.data.get(DOMAIN, {}).get(entry_id)
+        if coordinator is None:
+            return self.json({"error": "Unknown entry"}, status_code=404)
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        enabled = bool((body or {}).get("enabled"))
+        has_personalised = has_personalised_forecast(coordinator.data)
+        if enabled and not has_personalised:
+            return self.json(
+                {
+                    "error": "Personalised forecast is not available",
+                    "has_personalised": False,
+                    "use_personalised": False,
+                },
+                status_code=400,
+            )
+
+        hass.config_entries.async_update_entry(
+            coordinator.entry,
+            options={
+                **coordinator.entry.options,
+                CONF_USE_PERSONALISED: enabled,
+            },
+        )
+        return self.json(
+            {
+                "has_personalised": has_personalised,
+                "use_personalised": enabled,
+            }
+        )

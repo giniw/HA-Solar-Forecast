@@ -8,6 +8,7 @@ CONF_NAME = "identifier"
 # Existing config-entry key; keep the original string for backward compatibility.
 CONF_POWER_SENSOR = "Sensor For Sending Production Data"
 CONF_SEND_GENERATION = "send_generation_data"
+CONF_USE_PERSONALISED = "use_personalised_forecast"
 
 
 def send_generation_enabled(entry) -> bool:

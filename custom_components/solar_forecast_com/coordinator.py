@@ -32,6 +32,7 @@ class ForecastCoordinator(DataUpdateCoordinator):
             "api_key": api_key,
         }
         self.entry = entry
+        self._data_fingerprint = dict(entry.data)
 
         super().__init__(
             hass,

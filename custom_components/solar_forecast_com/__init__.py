@@ -8,7 +8,12 @@ from pathlib import Path
 import logging
 
 from .panel import async_register_panel
-from .views import SolarForecastView, SolarForecastEntitiesView, SolarForecastEntriesView
+from .views import (
+    SolarForecastView,
+    SolarForecastEntitiesView,
+    SolarForecastEntriesView,
+    SolarForecastPersonalisedView,
+)
 from .const import DOMAIN, CONF_API_KEY
 from .coordinator import ForecastCoordinator
 from homeassistant.helpers import entity_registry as er
@@ -31,7 +36,8 @@ async def async_setup(hass, config):
 
     hass.http.register_view(SolarForecastEntitiesView())
 
-    hass.http.register_view( SolarForecastEntriesView())
+    hass.http.register_view(SolarForecastEntriesView())
+    hass.http.register_view(SolarForecastPersonalisedView())
     await async_register_panel(hass)
 
     return True
@@ -123,7 +129,16 @@ async def async_setup_entry(hass, entry: ConfigEntry):
     return True
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry):
-    """Reload when the user changes options (sensor / send-generation)."""
+    """Reload when setup data changes.
+
+    The personalised-forecast toggle is stored in entry.options and is read
+    live, so it must not reload the integration.
+    """
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is not None and dict(entry.data) == getattr(
+        coordinator, "_data_fingerprint", None
+    ):
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 
