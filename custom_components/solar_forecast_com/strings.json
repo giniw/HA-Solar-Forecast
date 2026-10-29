@@ -12,7 +12,7 @@
         },
         "data_description": {
           "Sensor For Sending Production Data": "Used for the Generation series on the dashboard. Also uploaded when sending is enabled.",
-          "send_generation_data": "When enabled, sensor history is uploaded and the dashboard shows generation from solar-forecast.com. When disabled, the dashboard uses local sensor history only."
+          "send_generation_data": "When enabled, sensor history is uploaded, and the dashboard shows generation from solar-forecast.com. When disabled, the dashboard uses local sensor history only."
         }
       }
     },
@@ -25,14 +25,14 @@
     "step": {
       "init": {
         "title": "Generation data",
-        "description": "Choose a production power sensor and whether to upload its history to solar-forecast.com.",
+        "description": "Choose a production power sensor. If you have uploaded data from other sources, keep this blank.",
         "data": {
           "Sensor For Sending Production Data": "Production power sensor",
           "send_generation_data": "Send production data to solar-forecast.com"
         },
         "data_description": {
           "Sensor For Sending Production Data": "Used for the Generation series on the dashboard. Also uploaded when sending is enabled.",
-          "send_generation_data": "When enabled, sensor history is uploaded and the dashboard shows generation from solar-forecast.com. When disabled, the dashboard uses local sensor history only."
+          "send_generation_data": "When enabled, sensor history is uploaded, and the dashboard shows generation from solar-forecast.com. If you are already sending data from other sources, check this box to view generation data in the dashboard."
         }
       }
     }
